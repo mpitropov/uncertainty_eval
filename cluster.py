@@ -107,7 +107,20 @@ def cluster_preds(pred_dicts):
             pred_box_tmp = np.mean(cluster['boxes_lidar'], axis=0)
             pred_box_tmp[6] = cluster['boxes_lidar'][highest_conf_pred_idx][6] # Replace yaw
             final_box_list.append(pred_box_tmp)
-            # TODO we are not properly combining the variances!
+            # Each variance output in the model is correct for only one output
+            # Ex. width variance = width^2 * encoded width variance
+            # Instead of width^2 we need to use E^2[width] for a cluster
+            # Therefore we must divide the variance by width^2 for that box
+            # followed by mutiplying by the mean cluster width^2
+            for box_id in range(len(cluster['pred_vars'])):
+                # First divide by [w|l|h]^2 for this box to get back encoded variance
+                cluster['pred_vars'][box_id][3] /= np.square(cluster['boxes_lidar'][box_id][3])
+                cluster['pred_vars'][box_id][4] /= np.square(cluster['boxes_lidar'][box_id][4])
+                cluster['pred_vars'][box_id][5] /= np.square(cluster['boxes_lidar'][box_id][5])
+                # Now multiply by the expected value (mean) squared to get the correct variance
+                cluster['pred_vars'][box_id][3] *= np.square(pred_box_tmp[3])
+                cluster['pred_vars'][box_id][4] *= np.square(pred_box_tmp[4])
+                cluster['pred_vars'][box_id][5] *= np.square(pred_box_tmp[5])
             final_var_list.append(np.mean(cluster['pred_vars'], axis=0))
         final_name_list = np.array(final_name_list)
         final_label_list = np.array(final_label_list)
