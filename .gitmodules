@@ -1,0 +1,3 @@
+[submodule "detection_eval"]
+	path = detection_eval
+	url = ist-git@git.uwaterloo.ca:wise-ads/detection_eval.git
