@@ -26,7 +26,11 @@ def cluster_preds(pred_dicts):
     MIN_CLUSTER_SIZE = 2
 
     # If output is already one dict per frame
+    # Only should apply softmax
     if isinstance(pred_dicts[0], dict):
+        for i in range(len(pred_dicts)):
+            for j in range(len(pred_dicts[i]['score_all'])):
+                pred_dicts[i]['score_all'][j] = softmax(pred_dicts[i]['score_all'][j])
         return pred_dicts
 
     new_pred_dicts = []

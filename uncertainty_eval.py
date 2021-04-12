@@ -28,14 +28,14 @@ from ece import calculate_ece, plot_reliability
 import calibration as cal
 
 dataset_path = '/home/matthew/git/cadc_testing/WISEOpenLidarPerceptron/data/kitti'
-logdir = '/home/matthew/git/cadc_testing/al_output/pcdet_log_20_epoch/kittidatasetvar/random/eval_192e0b82f64b5c2207934a583985aa2e'
-gts_path = os.path.join(logdir, 'gt.pkl')
+logdir = '/home/matthew/git/cadc_testing/uncertainty_eval'
+gts_path = os.path.join(logdir, 'gts.pkl')
 
 # Clustering
 logdir = '/home/matthew/git/cadc_testing/uncertainty_eval'
 preds_path = os.path.join(logdir, 'result_converted.pkl')
 # preds_path = os.path.join(logdir, 'dropout_s11_result.pkl')
-# preds_path = os.path.join(logdir, 'dropout_s11_old_result.pkl')
+preds_path = os.path.join(logdir, 'dropout_s11_old_result.pkl')
 
 # Uncertainty Eval path to save the reliability diagram
 uncertainty_eval_path='/home/matthew/git/cadc_testing/uncertainty_eval'
@@ -122,23 +122,14 @@ def main():
         2: 0.5,    # Pedestrian
         3: 0.5     # Cyclist
     }
-    car_filter = ClassFilter(name='Car', label=1,
-                            gt_processor=gt_processor, pred_processor=pred_processor)
-    ped_filter = ClassFilter(name='Pedestrian', label=2,
-                            gt_processor=gt_processor, pred_processor=pred_processor)
-    cyc_filter = ClassFilter(name='Cyclist', label=3,
-                            gt_processor=gt_processor, pred_processor=pred_processor)
-    filter_list = [car_filter, ped_filter, cyc_filter]
-    # filter_list = build_kitti_filters(dataset_path + '/kitti_infos_val.pkl')
+    filter_list = build_kitti_filters(dataset_path + '/kitti_infos_val.pkl')
 
     for filter_idx in range(len(filter_list)):
-        print("Performing evaluation for:")
-        print(filter_list[filter_idx].name)
-        # print(filter_list[filter_idx].class_name, filter_list[filter_idx].class_label, \
-        #     filter_list[filter_idx].difficulty)
+        print("Performing evaluation for class " + filter_list[filter_idx].class_name + \
+            " and difficulty " + str(filter_list[filter_idx].difficulty))
 
         # Evaluate over validation set
-        print("Loop through all dictionaries for each sample...")
+        print("Loop through and evaluate all samples...")
         def attach_data(sample_idx, gt_dict, pred_dict, gt_list, pred_list):
             for i in range(len(gt_list)):
                 gt_list.data[i] = dict(gt_boxes=gt_dict['gt_boxes'][i])
