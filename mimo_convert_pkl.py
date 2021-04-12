@@ -1,6 +1,7 @@
 import pickle
 
 pkl_file = "/home/matthew/git/cadc_testing/WISEPCDet_MIMO/output/kitti_models/pointpillar_mimo_var/default/eval/epoch_80/val/default/result.pkl"
+pkl_file = '/home/matthew/git/cadc_testing/uncertainty_eval/mimo_120_result.pkl'
 
 ret_dict_list = pickle.load( open( pkl_file, "rb" ) )
 

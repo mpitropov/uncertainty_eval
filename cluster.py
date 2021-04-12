@@ -2,7 +2,7 @@ import numpy as np
 from sklearn.cluster import DBSCAN
 from scipy.special import softmax
 
-from detection import Detection
+from detection_eval import DetectionEval
 
 def get_labels(data_dict):
     if 'gt_labels' in data_dict:
@@ -23,9 +23,10 @@ def get_labels(data_dict):
 def cluster_preds(pred_dicts):
     num_frames = len(pred_dicts)
     num_outputs_per_frame = len(pred_dicts[0])
+    MIN_CLUSTER_SIZE = 2
 
     # If output is already one dict per frame
-    if num_outputs_per_frame == 1:
+    if isinstance(pred_dicts[0], dict):
         return pred_dicts
 
     new_pred_dicts = []
@@ -56,14 +57,10 @@ def cluster_preds(pred_dicts):
         score_all_list = np.array(score_all_list)
         box_list = np.array(box_list)
         box_var_list = np.array(box_var_list)
-        #     print(box_list)
 
-        ctable = Detection.compute_ctable(box_list, box_list, criterion='iou')
-        #     print(ctable)
-
+        ctable = DetectionEval.compute_ctable(box_list, box_list, criterion='iou')
         # IDs >= 0 are valid clusters while -1 means the cluster did not reach min samples
-        cluster_ids = DBSCAN(eps=0.5, min_samples=num_outputs_per_frame).fit_predict(ctable)
-        #     print(cluster_ids)
+        cluster_ids = DBSCAN(eps=0.5, min_samples=MIN_CLUSTER_SIZE).fit_predict(ctable)
 
         cluster_dict = {}
         for obj_index in range(len(cluster_ids)):

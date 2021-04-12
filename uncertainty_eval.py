@@ -34,6 +34,8 @@ gts_path = os.path.join(logdir, 'gt.pkl')
 # Clustering
 logdir = '/home/matthew/git/cadc_testing/uncertainty_eval'
 preds_path = os.path.join(logdir, 'result_converted.pkl')
+# preds_path = os.path.join(logdir, 'dropout_s11_result.pkl')
+# preds_path = os.path.join(logdir, 'dropout_s11_old_result.pkl')
 
 # Uncertainty Eval path to save the reliability diagram
 uncertainty_eval_path='/home/matthew/git/cadc_testing/uncertainty_eval'
@@ -136,43 +138,27 @@ def main():
         #     filter_list[filter_idx].difficulty)
 
         # Evaluate over validation set
-        # Construct empty list to store the results
-        gt_list = BoxList()
-        pred_list = BoxList()
-
         print("Loop through all dictionaries for each sample...")
-        for gt_dict, pred_dict in tqdm(zip(gt_dicts, pred_dicts), total=len(gt_dicts)):
-            # Get results for one sample
-            gt_list_one, pred_list_one = DetectionEval.evaluate_one_sample(
-                gt_dict,
-                pred_dict,
-                thresholds,
-                criterion='iou',
-                epsilon=0.1,
-                filta=filter_list[filter_idx],
-                gt_processor=gt_processor,
-                pred_processor=pred_processor
-            )
+        def attach_data(sample_idx, gt_dict, pred_dict, gt_list, pred_list):
+            for i in range(len(gt_list)):
+                gt_list.data[i] = dict(gt_boxes=gt_dict['gt_boxes'][i])
+            for i in range(len(pred_list)):
+                pred_list.data[i] = dict(
+                    score_all=pred_dict['score_all'][i],
+                    boxes_lidar=pred_dict['boxes_lidar'][i],
+                    pred_vars=pred_dict['pred_vars'][i]
+                )
 
-            # Attach any extra data you need, e.g. frame_id, box coordinates, etc.
-            # The data field needs to be an np array of dictinary/objects of the same size as other fields
-            # i.e.  1) len( list.data ) = number of gt boxes
-            #       2) list.data[i] = object or dict
-            # gt_list_one.data = np.array([gt_dict] * len(get_labels(gt_dict)), dtype=object)
-            gt_list_one.data = [gt_dict] * len(get_labels(gt_dict))
-            # Add scores, box coordinates and box variances
-            for i in range(len(pred_dict['score_all'])):
-                pred_list_one.data[i] = {
-                    'score_all': pred_dict['score_all'][i],
-                    'boxes_lidar': pred_dict['boxes_lidar'][i],
-                    'pred_vars': pred_dict['pred_vars'][i]
-                }
-
-            # Aggregate the results by simple addition
-            # print(gt_list_one.data)
-            # print(pred_list_one.data)
-            gt_list += gt_list_one
-            pred_list += pred_list_one
+        gt_list, pred_list = DetectionEval.evaluate_all_samples(
+            gt_dicts, pred_dicts,
+            thresholds=thresholds,
+            criterion='iou_3d',
+            filta=filter_list[filter_idx],
+            gt_processor=gt_processor,
+            pred_processor=pred_processor,
+            pbar=tqdm(total=len(gt_dicts)),
+            callback=attach_data
+        )
 
         print("Evaluate Uncertainty...")
         # A prediction box is either a TP or FP
@@ -203,15 +189,18 @@ def main():
         tp_dontcare_count = 0
         fp_dontcare_count = 0
 
-        # TODO: Need to get the gt box coordinates for NLL REG and DMM
-
+        print("Display variance of first TP", pred_list[tp][0].data['pred_vars'])
         # TP loop
         for obj in pred_list[tp]:
+            gt_box = gt_list[int(obj.matched_idx)].data['gt_boxes']
+            # print(obj.data['pred_vars'])
+            # if np.sum(obj.data['pred_vars']) > 1:
+            #     print(obj.data['pred_vars'])
             nll_clf_obj.add_tp(obj.pred_score)
-        #     nll_reg_obj.add_tp(GT_TODO_HOW, obj.data['boxes_lidar'], obj.data['pred_vars'])
+            nll_reg_obj.add_tp(gt_box, obj.data['boxes_lidar'], obj.data['pred_vars'])
             binary_brier_obj.add_tp(obj.pred_score)
             brier_obj.add_tp(obj.pred_label, obj.data['score_all'])
-        #     dmm_obj.add_tp(GT_TODO_HOW, obj.data['boxes_lidar'], obj.data['pred_vars'])
+            dmm_obj.add_tp(gt_box, obj.data['boxes_lidar'], obj.data['pred_vars'])
 
         # FP loop
         for obj in pred_list[fp]:
@@ -219,10 +208,10 @@ def main():
             binary_brier_obj.add_fp(obj.pred_score)
 
         print('NLL Classification mean', nll_clf_obj.mean())
-        # print('NLL Regression mean', nll_reg_obj.mean())
+        print('NLL Regression mean', nll_reg_obj.mean())
         print('Binary Brier Score Classification mean', binary_brier_obj.mean())
         print('Brier Score Classification mean', brier_obj.mean())
-        # print('DMM Regression mean', dmm_obj.mean())
+        print('DMM Regression mean', dmm_obj.mean())
 
         # TP loop Calibration Error
         for obj in pred_list[tp]:
@@ -274,8 +263,8 @@ def main():
 
         accuracy, ece, key = calculate_ece(conf_mat, num_bins, filter_list[filter_idx].name)
 
-        print('tp_dontcare_count', tp_dontcare_count)
-        print('fp_dontcare_count', fp_dontcare_count)
+        # print('tp_dontcare_count', tp_dontcare_count)
+        # print('fp_dontcare_count', fp_dontcare_count)
         print("Accuracy bins", accuracy)
         print("Calculated ECE", ece)
 
