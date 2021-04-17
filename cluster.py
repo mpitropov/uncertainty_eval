@@ -20,14 +20,17 @@ def get_labels(data_dict):
 # First list is number of frames in the dataset
 # Each dict is in the form of a frame output from OpenPCDet
 # but the values inside are from the mean of each cluster
-def cluster_preds(pred_dicts):
+def cluster_preds(pred_dicts, MIN_CLUSTER_SIZE):
     num_frames = len(pred_dicts)
     num_outputs_per_frame = len(pred_dicts[0])
-    MIN_CLUSTER_SIZE = 2
 
     # If output is already one dict per frame
     # Only should apply softmax
     if isinstance(pred_dicts[0], dict):
+        # If original model then just return the predictions
+        if 'score_all' not in pred_dicts[0]:
+            return pred_dicts
+
         for i in range(len(pred_dicts)):
             for j in range(len(pred_dicts[i]['score_all'])):
                 pred_dicts[i]['score_all'][j] = softmax(pred_dicts[i]['score_all'][j])
@@ -42,12 +45,12 @@ def cluster_preds(pred_dicts):
         box_list = []
         box_var_list = []
         for single_data_dict in frame_dict_list:
-            names_one_frame = single_data_dict[0]['name']
-            labels_one_frame = get_labels(single_data_dict[0])
-            score_one_frame = single_data_dict[0]['score']
-            score_all_one_frame = single_data_dict[0]['score_all']
-            boxes_one_frame = single_data_dict[0]['boxes_lidar']
-            box_vars_one_frame = single_data_dict[0]['pred_vars']
+            names_one_frame = single_data_dict['name']
+            labels_one_frame = get_labels(single_data_dict)
+            score_one_frame = single_data_dict['score']
+            score_all_one_frame = single_data_dict['score_all']
+            boxes_one_frame = single_data_dict['boxes_lidar']
+            box_vars_one_frame = single_data_dict['pred_vars']
             for i in range(len(labels_one_frame)):
                 name_list.append(names_one_frame[i])
                 label_list.append(labels_one_frame[i])
@@ -64,7 +67,7 @@ def cluster_preds(pred_dicts):
 
         ctable = DetectionEval.compute_ctable(box_list, box_list, criterion='iou')
         # IDs >= 0 are valid clusters while -1 means the cluster did not reach min samples
-        cluster_ids = DBSCAN(eps=0.5, min_samples=MIN_CLUSTER_SIZE).fit_predict(ctable)
+        cluster_ids = DBSCAN(eps=0.7, min_samples=MIN_CLUSTER_SIZE).fit_predict(ctable)
 
         cluster_dict = {}
         for obj_index in range(len(cluster_ids)):
@@ -135,7 +138,7 @@ def cluster_preds(pred_dicts):
         
         # Add mean output for the frame
         new_pred_dicts.append({
-            'frame_id': frame_dict_list[0][0]['frame_id'],
+            'frame_id': frame_dict_list[0]['frame_id'],
             'name': final_name_list, 
             'pred_labels': final_label_list, 
             'score': final_score_list,

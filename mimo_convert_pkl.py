@@ -16,6 +16,9 @@ for ret_dict in ret_dict_list:
     print('reading frame', ret_dict['frame_id'])
     # Get list of return dicts for each detection head
     list_of_head_outputs = ret_dict['post_nms_head_outputs']
-    new_ret_dict_list.append(list_of_head_outputs)
+    proper_list = []
+    for out in list_of_head_outputs:
+        proper_list.append(out[0])
+    new_ret_dict_list.append(proper_list)
 
 pickle.dump( new_ret_dict_list, open( "result_converted.pkl", "wb" ) )

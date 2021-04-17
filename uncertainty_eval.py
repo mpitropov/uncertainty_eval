@@ -33,11 +33,42 @@ gts_path = os.path.join(logdir, 'gts.pkl')
 
 # Clustering
 logdir = '/home/matthew/git/cadc_testing/uncertainty_eval'
-preds_path = os.path.join(logdir, 'result_converted.pkl')
-# preds_path = os.path.join(logdir, 'dropout_s11_result.pkl')
-preds_path = os.path.join(logdir, 'dropout_s11_old_result.pkl')
+ENSEMBLE_TYPE = 1
+VOTING_STATEGY = 1
 
-# Uncertainty Eval path to save the reliability diagram
+if ENSEMBLE_TYPE == -1: # original model
+    print('Ensemble type: OpenPCDet PointPillars 80 epochs')
+    MIN_CLUSTER_SIZE = 1
+    preds_path = os.path.join(logdir, 'openpcdet_80_result.pkl')
+elif ENSEMBLE_TYPE == 0: # mc-dropout
+    print('Ensemble type: mc-dropout')
+    MIN_CLUSTER_SIZE = 20
+    preds_path = os.path.join(logdir, 'mcdropout_20_result.pkl')
+    # MIN_CLUSTER_SIZE = 5
+    # preds_path = os.path.join(logdir, 'mcdropout_5_result.pkl')
+elif ENSEMBLE_TYPE == 1: # ensemble
+    print('Ensemble type: ensemble')
+    MIN_CLUSTER_SIZE = 4
+    preds_path = os.path.join(logdir, 'ensemble_result.pkl')
+elif ENSEMBLE_TYPE == 2: # mimo
+    print('Ensemble type: mimo')
+    MIN_CLUSTER_SIZE = 2
+    preds_path = os.path.join(logdir, 'result_converted.pkl')
+else:
+    raise NotImplementedError
+
+if VOTING_STATEGY == 0: # Affirmative: all objects kept
+    MIN_CLUSTER_SIZE = 1
+elif VOTING_STATEGY == 1: # Consensus: Majority must agree
+    MIN_CLUSTER_SIZE = int(MIN_CLUSTER_SIZE/2 + 1)
+elif VOTING_STATEGY == 2: # Unanimous: All must agree
+    MIN_CLUSTER_SIZE = MIN_CLUSTER_SIZE
+else:
+    raise NotImplementedError
+
+print('Minimum cluster size of', MIN_CLUSTER_SIZE)
+
+# Uncertainty Eval path to save the reliability diagrams
 uncertainty_eval_path='/home/matthew/git/cadc_testing/uncertainty_eval'
 
 def load_dicts():
@@ -112,7 +143,7 @@ def main():
     print("Load dictionaries...")
     gt_dicts, pred_dicts = load_dicts()
     print("Clustering predictions by frame...")
-    pred_dicts = cluster_preds(pred_dicts)
+    pred_dicts = cluster_preds(pred_dicts, MIN_CLUSTER_SIZE)
 
     # Threshold (list or dict) maps a label to a matching threshold
     # thresholds[label] = threshold
@@ -133,12 +164,18 @@ def main():
         def attach_data(sample_idx, gt_dict, pred_dict, gt_list, pred_list):
             for i in range(len(gt_list)):
                 gt_list.data[i] = dict(gt_boxes=gt_dict['gt_boxes'][i])
-            for i in range(len(pred_list)):
-                pred_list.data[i] = dict(
-                    score_all=pred_dict['score_all'][i],
-                    boxes_lidar=pred_dict['boxes_lidar'][i],
-                    pred_vars=pred_dict['pred_vars'][i]
-                )
+            if 'score_all' not in pred_dict: # original model
+                for i in range(len(pred_list)):
+                    pred_list.data[i] = dict(
+                        boxes_lidar=pred_dict['boxes_lidar'][i]
+                    )
+            else:
+                for i in range(len(pred_list)):
+                    pred_list.data[i] = dict(
+                        score_all=pred_dict['score_all'][i],
+                        boxes_lidar=pred_dict['boxes_lidar'][i],
+                        pred_vars=pred_dict['pred_vars'][i]
+                    )
 
         gt_list, pred_list = DetectionEval.evaluate_all_samples(
             gt_dicts, pred_dicts,
@@ -153,10 +190,10 @@ def main():
 
         print("Evaluate Uncertainty...")
         # A prediction box is either a TP or FP
-        # TP is both localized and classified
-        tp = (~pred_list.ignored) & (pred_list.localized) & (pred_list.classified)
-        # FP is the negative of TPs
-        fp = (~tp)
+        # TP is valid, localized and classified
+        tp = pred_list.valid & pred_list.localized & pred_list.classified
+        # FP is valid and either not localized or not classified correctly
+        fp = pred_list.valid & ~(pred_list.localized & pred_list.classified)
 
         NUM_CLASSES = 3
 
@@ -176,86 +213,104 @@ def main():
         preds_score_all = []
         gt_score_all = []
 
-        # Keep track of odd TPs/FPs
-        tp_dontcare_count = 0
-        fp_dontcare_count = 0
+        print('Number of predictions', len(pred_list))
+        print('Number of TPs', len(pred_list[tp]))
+        print('Number of FPs', len(pred_list[fp]))
 
-        print("Display variance of first TP", pred_list[tp][0].data['pred_vars'])
-        # TP loop
-        for obj in pred_list[tp]:
-            gt_box = gt_list[int(obj.matched_idx)].data['gt_boxes']
-            # print(obj.data['pred_vars'])
-            # if np.sum(obj.data['pred_vars']) > 1:
-            #     print(obj.data['pred_vars'])
-            nll_clf_obj.add_tp(obj.pred_score)
-            nll_reg_obj.add_tp(gt_box, obj.data['boxes_lidar'], obj.data['pred_vars'])
-            binary_brier_obj.add_tp(obj.pred_score)
-            brier_obj.add_tp(obj.pred_label, obj.data['score_all'])
-            dmm_obj.add_tp(gt_box, obj.data['boxes_lidar'], obj.data['pred_vars'])
+        # Scoring Rules
+        if ENSEMBLE_TYPE == -1: # original model
+            # TP loop
+            for obj in pred_list[tp]:
+                nll_clf_obj.add_tp(obj.pred_score)
+                binary_brier_obj.add_tp(obj.pred_score)
 
-        # FP loop
-        for obj in pred_list[fp]:
-            nll_clf_obj.add_fp(obj.pred_score)
-            binary_brier_obj.add_fp(obj.pred_score)
+            # FP loop
+            for obj in pred_list[fp]:
+                nll_clf_obj.add_fp(obj.pred_score)
+                binary_brier_obj.add_fp(obj.pred_score)
+        else:
+            # TP loop
+            for obj in pred_list[tp]:
+                gt_box = gt_list[int(obj.matched_idx)].data['gt_boxes']
+                nll_clf_obj.add_tp(obj.pred_score)
+                nll_reg_obj.add_tp(gt_box, obj.data['boxes_lidar'], obj.data['pred_vars'])
+                binary_brier_obj.add_tp(obj.pred_score)
+                brier_obj.add_tp(obj.pred_label, obj.data['score_all'])
+                dmm_obj.add_tp(gt_box, obj.data['boxes_lidar'], obj.data['pred_vars'])
+
+            # FP loop
+            for obj in pred_list[fp]:
+                nll_clf_obj.add_bg_tp(obj.data['score_all'][NUM_CLASSES])
+                binary_brier_obj.add_bg_tp(obj.data['score_all'][NUM_CLASSES])
+                brier_obj.add_fp(NUM_CLASSES, obj.data['score_all'])
 
         print('NLL Classification mean', nll_clf_obj.mean())
-        print('NLL Regression mean', nll_reg_obj.mean())
+        print('NLL Classification mean TP', nll_clf_obj.mean_tp())
+        print('NLL Classification mean FP', nll_clf_obj.mean_fp())
         print('Binary Brier Score Classification mean', binary_brier_obj.mean())
-        print('Brier Score Classification mean', brier_obj.mean())
-        print('DMM Regression mean', dmm_obj.mean())
+        print('Binary Brier Score Classification mean TP', binary_brier_obj.mean_tp())
+        print('Binary Brier Score Classification mean FP', binary_brier_obj.mean_fp())
+        if ENSEMBLE_TYPE != -1:
+            print('Brier Score Classification mean', brier_obj.mean())
+            print('Brier Score Classification mean TP', brier_obj.mean_tp())
+            print('Brier Score Classification mean FP', brier_obj.mean_fp())
+            print('NLL Regression mean', nll_reg_obj.mean())
+            print('DMM Regression mean', dmm_obj.mean())
 
-        # TP loop Calibration Error
-        for obj in pred_list[tp]:
-            bin_num = np.ceil(obj.pred_score * num_bins).astype(int)
-            conf_mat[bin_num]['TP'] += 1
-            # Calibration library
-            preds_score_all.append(obj.data['score_all'][0])
-            preds_score_all.append(obj.data['score_all'][1])
-            preds_score_all.append(obj.data['score_all'][2])
-            # add one hot to GT
-            gt_label = obj.gt_label
-            for one_hot in range(NUM_CLASSES):
-                if one_hot == int(gt_label - 1):
-                    gt_score_all.append(1)
-                else:
-                    gt_score_all.append(0)
+        # Calibration Error
+        if ENSEMBLE_TYPE == -1: # original model
+            # TP loop Calibration Error
+            for obj in pred_list[tp]:
+                bin_num = np.ceil(obj.pred_score * num_bins).astype(int)
+                conf_mat[bin_num]['TP'] += 1
+                # Calibration library
+                preds_score_all.append(obj.pred_score)
+                # Add GT as 1
+                gt_score_all.append(1)
 
-            # These check for strange output
-        #     if pred['target_labels'][idx] == -1:
-        #         tp_dontcare_count += 1
-        #     if pred['target_labels'][idx] != pred['pred_labels'][idx]:
-        #         print('WOAH target label != pred label')
-        #         print(pred['target_labels'][idx])
-        #         print(pred['pred_labels'][idx])
-
-        # FP loop Calibration Error
-        for obj in pred_list[fp]:
-            bin_num = np.ceil(obj.pred_score * num_bins).astype(int)
-            conf_mat[bin_num]['FP'] += 1
-            nll_clf_obj.add_fp(obj.pred_score)
-            binary_brier_obj.add_fp(obj.pred_score)
-            # Calibration library
-            preds_score_all.append(obj.data['score_all'][0])
-            preds_score_all.append(obj.data['score_all'][1])
-            preds_score_all.append(obj.data['score_all'][2])
-            gt_score_all.append(0)
-            gt_score_all.append(0)
-            gt_score_all.append(0)
-
-            # These check for strange output
-        #     if pred['target_labels'][idx] == -1:
-        #         print("FP with target label Don't Care")
-        #         print(ret)
-        #         fp_dontcare_count += 1
-        #     elif pred['target_labels'][idx] == 0:
-        #         print("FP with target label BG")
-        #     else:
-        #         print("Interesting case FP with not BG target label")
+            # FP loop Calibration Error
+            for obj in pred_list[fp]:
+                bin_num = np.ceil(obj.pred_score * num_bins).astype(int)
+                conf_mat[bin_num]['FP'] += 1
+                # Calibration library
+                preds_score_all.append(obj.pred_score)
+                # Add GT as 0
+                gt_score_all.append(0)
+        else:
+            # TP loop Calibration Error
+            for obj in pred_list[tp]:
+                bin_num = np.ceil(obj.pred_score * num_bins).astype(int)
+                conf_mat[bin_num]['TP'] += 1
+                # # Calibration library
+                # for score in obj.data['score_all']:
+                #     preds_score_all.append(score)
+                # # add one hot to GT
+                # gt_label = obj.gt_label
+                # one_hot_gt = np.eye(NUM_CLASSES+1, dtype=int)[int(gt_label - 1)]
+                # for score in one_hot_gt:
+                #     gt_score_all.append(score)
+                # Calibration library
+                preds_score_all.append(obj.data['score_all'])
+                # add class to GT
+                gt_label = obj.gt_label
+                gt_score_all.append(int(gt_label - 1))
+            # FP loop Calibration Error
+            for obj in pred_list[fp]:
+                bin_num = np.ceil(obj.pred_score * num_bins).astype(int)
+                conf_mat[bin_num]['FP'] += 1
+                # # Calibration library
+                # for score in obj.data['score_all']:
+                #     preds_score_all.append(score)
+                # one_hot_gt = np.eye(NUM_CLASSES+1, dtype=int)[NUM_CLASSES] # [0,0,...,0,1]
+                # for score in one_hot_gt:
+                #     gt_score_all.append(score)
+                # Calibration library
+                preds_score_all.append(obj.data['score_all'])
+                # Append BG class
+                gt_score_all.append(NUM_CLASSES)
 
         accuracy, ece, key = calculate_ece(conf_mat, num_bins, filter_list[filter_idx].name)
 
-        # print('tp_dontcare_count', tp_dontcare_count)
-        # print('fp_dontcare_count', fp_dontcare_count)
         print("Accuracy bins", accuracy)
         print("Calculated ECE", ece)
 
