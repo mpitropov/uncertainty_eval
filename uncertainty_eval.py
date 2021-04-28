@@ -22,6 +22,7 @@ from nll_reg import NLLREG
 from binary_brier_score import BINARYBRIERSCORE
 from brier_score import BRIERSCORE
 from dmm import DMM
+from energy_score import ENERGYSCORE
 
 # Calibration Error
 from ece import calculate_ece, plot_reliability
@@ -203,6 +204,7 @@ def main():
         binary_brier_obj = BINARYBRIERSCORE()
         brier_obj = BRIERSCORE()
         dmm_obj = DMM()
+        energy_obj = ENERGYSCORE()
 
         # Our own ECE Implementation
         num_bins = 10
@@ -237,12 +239,14 @@ def main():
                 binary_brier_obj.add_tp(obj.pred_score)
                 brier_obj.add_tp(obj.pred_label, obj.data['score_all'])
                 dmm_obj.add_tp(gt_box, obj.data['boxes_lidar'], obj.data['pred_vars'])
+                energy_obj.add_tp(gt_box, obj.data['boxes_lidar'], obj.data['pred_vars'])
 
             # FP loop
             for obj in pred_list[fp]:
                 nll_clf_obj.add_bg_tp(obj.data['score_all'][NUM_CLASSES])
                 binary_brier_obj.add_bg_tp(obj.data['score_all'][NUM_CLASSES])
                 brier_obj.add_fp(NUM_CLASSES, obj.data['score_all'])
+                energy_obj.add_fp(obj.data['boxes_lidar'], obj.data['pred_vars'])
 
         print('NLL Classification mean', nll_clf_obj.mean())
         print('NLL Classification mean TP', nll_clf_obj.mean_tp())
@@ -256,6 +260,7 @@ def main():
             print('Brier Score Classification mean FP', brier_obj.mean_fp())
             print('NLL Regression mean', nll_reg_obj.mean())
             print('DMM Regression mean', dmm_obj.mean())
+            print('Energy Regression mean', energy_obj.mean())
 
         # Calibration Error
         if ENSEMBLE_TYPE == -1: # original model
