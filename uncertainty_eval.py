@@ -1,4 +1,4 @@
-import os
+import os, sys
 from pprint import pprint
 
 import pickle
@@ -10,8 +10,8 @@ from tqdm import tqdm
 
 # Dataset evaluation
 from detection_eval.detection_eval import DetectionEval
-from detection_eval.filter import build_kitti_filters, ClassFilter
-from detection_eval.box_list import BoxList
+from detection_eval.filter import build_kitti_filters, CombinedFilter
+from detection_eval.box_list import combine_box_lists
 
 # Cluster predictions
 from cluster import cluster_preds
@@ -28,33 +28,33 @@ from energy_score import ENERGYSCORE
 from ece import calculate_ece, plot_reliability
 import calibration as cal
 
-dataset_path = '/home/matthew/git/cadc_testing/WISEOpenLidarPerceptron/data/kitti'
-logdir = '/home/matthew/git/cadc_testing/uncertainty_eval'
+dataset_path = '/root/kitti'
+logdir = '/root/logdir/output_pkls'
 gts_path = os.path.join(logdir, 'gts.pkl')
 
-# Clustering
-logdir = '/home/matthew/git/cadc_testing/uncertainty_eval'
-ENSEMBLE_TYPE = 1
-VOTING_STATEGY = 1
+# Uncertainty Eval path to save the reliability diagrams
+uncertainty_eval_path='/root/logdir/output_pkls'
+
+# Load arguments for clustering
+ENSEMBLE_TYPE = int(sys.argv[1])
+VOTING_STATEGY = int(sys.argv[2])
+
+# Create path to the pickle file
+PKL_FILE = sys.argv[3]
+preds_path = os.path.join(logdir, PKL_FILE)
 
 if ENSEMBLE_TYPE == -1: # original model
     print('Ensemble type: OpenPCDet PointPillars 80 epochs')
     MIN_CLUSTER_SIZE = 1
-    preds_path = os.path.join(logdir, 'openpcdet_80_result.pkl')
 elif ENSEMBLE_TYPE == 0: # mc-dropout
     print('Ensemble type: mc-dropout')
-    MIN_CLUSTER_SIZE = 20
-    preds_path = os.path.join(logdir, 'mcdropout_20_result.pkl')
-    # MIN_CLUSTER_SIZE = 5
-    # preds_path = os.path.join(logdir, 'mcdropout_5_result.pkl')
+    MIN_CLUSTER_SIZE = 4
 elif ENSEMBLE_TYPE == 1: # ensemble
     print('Ensemble type: ensemble')
     MIN_CLUSTER_SIZE = 4
-    preds_path = os.path.join(logdir, 'ensemble_result.pkl')
 elif ENSEMBLE_TYPE == 2: # mimo
     print('Ensemble type: mimo')
     MIN_CLUSTER_SIZE = 2
-    preds_path = os.path.join(logdir, 'result_converted.pkl')
 else:
     raise NotImplementedError
 
@@ -68,9 +68,6 @@ else:
     raise NotImplementedError
 
 print('Minimum cluster size of', MIN_CLUSTER_SIZE)
-
-# Uncertainty Eval path to save the reliability diagrams
-uncertainty_eval_path='/home/matthew/git/cadc_testing/uncertainty_eval'
 
 def load_dicts():
     # Load gt and prediction data dict
@@ -154,7 +151,15 @@ def main():
         2: 0.5,    # Pedestrian
         3: 0.5     # Cyclist
     }
-    filter_list = build_kitti_filters(dataset_path + '/kitti_infos_val.pkl')
+    kitti_filter_list = build_kitti_filters(dataset_path + '/kitti_infos_val.pkl')
+    filter_list = [
+        kitti_filter_list[1], # Car moderate
+        kitti_filter_list[4], # Ped moderate
+        kitti_filter_list[7], # Cyc moderate
+    ]
+
+    gt_list_list = []
+    pred_list_list = []
 
     for filter_idx in range(len(filter_list)):
         print("Performing evaluation for class " + filter_list[filter_idx].class_name + \
@@ -189,14 +194,28 @@ def main():
             callback=attach_data
         )
 
-        print("Evaluate Uncertainty...")
+        gt_list_list.append(gt_list)
+        pred_list_list.append(pred_list)
+
+    # Create combined gt and pred_list
+    gt_list_list.append(combine_box_lists(gt_list_list))
+    pred_list_list.append(combine_box_lists(pred_list_list))
+
+    class_names = ['Car', 'Ped', 'Cyc', 'All']
+    NUM_CLASSES = 3
+    ap_list = []
+
+    for idx in range(len(class_names)):
+        print("Evaluate Uncertainty for " + class_names[idx] + "...")
+        # Get current gt and pred list
+        gt_list = gt_list_list[idx]
+        pred_list = pred_list_list[idx]
+
         # A prediction box is either a TP or FP
         # TP is valid, localized and classified
         tp = pred_list.valid & pred_list.localized & pred_list.classified
         # FP is valid and either not localized or not classified correctly
         fp = pred_list.valid & ~(pred_list.localized & pred_list.classified)
-
-        NUM_CLASSES = 3
 
         # Init Scoring Rules
         nll_clf_obj = NLLCLF()
@@ -218,6 +237,16 @@ def main():
         print('Number of predictions', len(pred_list))
         print('Number of TPs', len(pred_list[tp]))
         print('Number of FPs', len(pred_list[fp]))
+        stats_result = DetectionEval.compute_statistics(gt_list=gt_list, \
+                            pred_list=pred_list, n_positions=40)
+        print('Number of FNs', stats_result['fn'])
+        if idx == NUM_CLASSES: # Use mean of APs
+            print('mAP@40', np.mean(ap_list).round(2))
+        else:
+            curr_ap = (100 * stats_result['ap'])
+            ap_list.append(curr_ap)
+            print('AP@40', curr_ap.round(2))
+
 
         # Scoring Rules
         if ENSEMBLE_TYPE == -1: # original model
@@ -248,19 +277,19 @@ def main():
                 brier_obj.add_fp(NUM_CLASSES, obj.data['score_all'])
                 energy_obj.add_fp(obj.data['boxes_lidar'], obj.data['pred_vars'])
 
-        print('NLL Classification mean', nll_clf_obj.mean())
-        print('NLL Classification mean TP', nll_clf_obj.mean_tp())
-        print('NLL Classification mean FP', nll_clf_obj.mean_fp())
-        print('Binary Brier Score Classification mean', binary_brier_obj.mean())
-        print('Binary Brier Score Classification mean TP', binary_brier_obj.mean_tp())
-        print('Binary Brier Score Classification mean FP', binary_brier_obj.mean_fp())
+        print('NLL Classification mean', nll_clf_obj.mean().round(4))
+        print('NLL Classification mean TP', nll_clf_obj.mean_tp().round(4))
+        print('NLL Classification mean FP', nll_clf_obj.mean_fp().round(4))
+        print('Binary Brier Score Classification mean', binary_brier_obj.mean().round(4))
+        print('Binary Brier Score Classification mean TP', binary_brier_obj.mean_tp().round(4))
+        print('Binary Brier Score Classification mean FP', binary_brier_obj.mean_fp().round(4))
         if ENSEMBLE_TYPE != -1:
-            print('Brier Score Classification mean', brier_obj.mean())
-            print('Brier Score Classification mean TP', brier_obj.mean_tp())
-            print('Brier Score Classification mean FP', brier_obj.mean_fp())
-            print('NLL Regression mean', nll_reg_obj.mean())
-            print('DMM Regression mean', dmm_obj.mean())
-            print('Energy Regression mean', energy_obj.mean())
+            print('Brier Score Classification mean', brier_obj.mean().round(4))
+            print('Brier Score Classification mean TP', brier_obj.mean_tp().round(4))
+            print('Brier Score Classification mean FP', brier_obj.mean_fp().round(4))
+            print('NLL Regression mean', nll_reg_obj.mean().round(4))
+            print('DMM Regression mean', dmm_obj.mean().round(4))
+            print('Energy Regression mean', energy_obj.mean().round(4))
 
         # Calibration Error
         if ENSEMBLE_TYPE == -1: # original model
@@ -314,7 +343,7 @@ def main():
                 # Append BG class
                 gt_score_all.append(NUM_CLASSES)
 
-        accuracy, ece, key = calculate_ece(conf_mat, num_bins, filter_list[filter_idx].name)
+        accuracy, ece, key = calculate_ece(conf_mat, num_bins, class_names[idx])
 
         print("Accuracy bins", accuracy)
         print("Calculated ECE", ece)
@@ -324,14 +353,14 @@ def main():
         # ECE
         cls_expected_calibration_error = cal.get_ece(
             preds_score_all, gt_score_all)
-        print("cls_expected_calibration_error", cls_expected_calibration_error)
+        print("cls_expected_calibration_error", cls_expected_calibration_error.round(4))
         # ECE stable binning (seems the same)
         cls_expected_calibration_error = cal.get_top_calibration_error(
             preds_score_all, gt_score_all, p=1)
-        print("cls_expected_calibration_error 'stable binning'", cls_expected_calibration_error)
+        print("cls_expected_calibration_error 'stable binning'", cls_expected_calibration_error.round(4))
         # Marginal CE
         cls_marginal_calibration_error = cal.get_calibration_error(
             preds_score_all, gt_score_all)
-        print("cls_marginal_calibration_error", cls_marginal_calibration_error)
+        print("cls_marginal_calibration_error", cls_marginal_calibration_error.round(4))
 
 main()

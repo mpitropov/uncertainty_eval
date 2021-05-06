@@ -100,6 +100,7 @@ def cluster_preds(pred_dicts, MIN_CLUSTER_SIZE):
         final_score_all_list = []
         final_box_list = []
         final_var_list = []
+        final_cluster_size_list = []
         for cluster_id in cluster_dict:
             cluster = cluster_dict[cluster_id]
             final_name_list.append(cluster['name'][0]) # Take the first one, asssume cluster preds the same class
@@ -126,12 +127,14 @@ def cluster_preds(pred_dicts, MIN_CLUSTER_SIZE):
                 cluster['pred_vars'][box_id][4] *= np.square(pred_box_tmp[4])
                 cluster['pred_vars'][box_id][5] *= np.square(pred_box_tmp[5])
             final_var_list.append(np.mean(cluster['pred_vars'], axis=0))
+            final_cluster_size_list.append(len(cluster['pred_vars']))
         final_name_list = np.array(final_name_list)
         final_label_list = np.array(final_label_list)
         final_score_list = np.array(final_score_list)
         final_score_all_list = np.array(final_score_all_list)
         final_box_list = np.array(final_box_list)
         final_var_list = np.array(final_var_list)
+        final_cluster_size_list = np.array(final_cluster_size_list)
         #     print(final_label_list)
         #     print(final_score_list)    
         #     print(final_box_list)
@@ -144,7 +147,8 @@ def cluster_preds(pred_dicts, MIN_CLUSTER_SIZE):
             'score': final_score_list,
             'score_all': final_score_all_list,
             'boxes_lidar': final_box_list,
-            'pred_vars': final_var_list
+            'pred_vars': final_var_list,
+            'cluster_size': final_cluster_size_list
         })
 
     return new_pred_dicts
