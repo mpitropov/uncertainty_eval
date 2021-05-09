@@ -25,7 +25,7 @@ from dmm import DMM
 from energy_score import ENERGYSCORE
 
 # Calibration Error
-from ece import calculate_ece, plot_reliability
+from ece import calculate_ece, plot_reliability, calculate_ece_reg
 import calibration as cal
 
 dataset_path = '/root/kitti'
@@ -362,5 +362,12 @@ def main():
         cls_marginal_calibration_error = cal.get_calibration_error(
             preds_score_all, gt_score_all)
         print("cls_marginal_calibration_error", cls_marginal_calibration_error.round(4))
+
+        if ENSEMBLE_TYPE != -1:
+            reg_maximum_calibration_error, reg_expected_calibration_error = calculate_ece_reg(gt_list, pred_list[tp])
+            print("Regression Maximum Calibration Error", reg_maximum_calibration_error)
+            print("Regression Expected Calibration Error", reg_expected_calibration_error)
+
+        
 
 main()
