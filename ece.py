@@ -1,8 +1,7 @@
-
 import numpy as np
 import matplotlib.pyplot as plt
 import torch
-import scipy
+from scipy.stats import vonmises
 
 def calculate_ece(conf_mat, num_bins, name):
     # Calculate Precision from TP and FP
