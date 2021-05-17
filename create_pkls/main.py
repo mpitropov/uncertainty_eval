@@ -99,7 +99,7 @@ if __name__ == '__main__':
     loggers.append(dbinfos_logger)
     if 'kitti' in dataset_name:
         from datasets.kitti import KITTIPool, KITTI
-        dbinfos_stem = f'kitti_dbinfos_train_{args.query_method_name.lower()}.pkl'
+        dbinfos_stem = f'kitti_dbinfos_train.pkl'
         for aug_config in dataset_cfg.DATA_AUGMENTOR.AUG_CONFIG_LIST:
             if aug_config.NAME == 'gt_sampling':
                 aug_config.DB_INFO_PATH = [dbinfos_stem]

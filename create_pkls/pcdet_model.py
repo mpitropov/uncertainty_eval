@@ -495,7 +495,12 @@ def test_worker(gpu, args, cfg, test_loader, eval_output_dir, mcdropout=False, n
     model.eval()
     if mcdropout:
         logger.warn('MC dropout enabled during inference')
-        alf.query._enable_dropout_torch(model)
+        def _enable_dropout_torch(model):
+            def apply_dropout(m):
+                if type(m) == nn.Dropout:
+                    m.train()
+            model.apply(apply_dropout)
+        _enable_dropout_torch(model)
 
     if cfg.LOCAL_RANK == 0:
         progress_bar = tqdm.tqdm(total=len(dataloader)*n_times, leave=leave, desc='eval', dynamic_ncols=True)
