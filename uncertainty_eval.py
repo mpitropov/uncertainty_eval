@@ -17,12 +17,12 @@ from detection_eval.box_list import combine_box_lists
 from cluster import cluster_preds
 
 # Scoring Rules
-from nll_clf import NLLCLF
-from nll_reg import NLLREG
-from binary_brier_score import BINARYBRIERSCORE
-from brier_score import BRIERSCORE
-from dmm import DMM
-from energy_score import ENERGYSCORE
+from scoring.nll_clf import NLLCLF
+from scoring.nll_reg import NLLREG
+from scoring.binary_brier_score import BINARYBRIERSCORE
+from scoring.brier_score import BRIERSCORE
+from scoring.dmm import DMM
+from scoring.energy_score import ENERGYSCORE
 
 # Calibration Error
 from ece import calculate_ece, plot_reliability, calculate_ece_reg
@@ -247,35 +247,31 @@ def main():
             ap_list.append(curr_ap)
             print('AP@40', curr_ap.round(2))
 
-
         # Scoring Rules
+        
         if ENSEMBLE_TYPE == -1: # original model
-            # TP loop
-            for obj in pred_list[tp]:
-                nll_clf_obj.add_tp(obj.pred_score)
-                binary_brier_obj.add_tp(obj.pred_score)
+            # TP
+            nll_clf_obj.add_tp(pred_list[tp])
+            binary_brier_obj.add_tp(pred_list[tp])
 
-            # FP loop
-            for obj in pred_list[fp]:
-                nll_clf_obj.add_fp(obj.pred_score)
-                binary_brier_obj.add_fp(obj.pred_score)
+            # FP
+            nll_clf_obj.add_fp(pred_list[fp])
+            binary_brier_obj.add_fp(pred_list[fp])
         else:
-            # TP loop
-            for obj in pred_list[tp]:
-                gt_box = gt_list[int(obj.matched_idx)].data['gt_boxes']
-                nll_clf_obj.add_tp(obj.pred_score)
-                nll_reg_obj.add_tp(gt_box, obj.data['boxes_lidar'], obj.data['pred_vars'])
-                binary_brier_obj.add_tp(obj.pred_score)
-                brier_obj.add_tp(obj.pred_label, obj.data['score_all'])
-                dmm_obj.add_tp(gt_box, obj.data['boxes_lidar'], obj.data['pred_vars'])
-                energy_obj.add_tp(gt_box, obj.data['boxes_lidar'], obj.data['pred_vars'])
+            # TP
+            nll_clf_obj.add_tp(pred_list[tp])
+            binary_brier_obj.add_tp(pred_list[tp])
+            brier_obj.add_tp(pred_list[tp])
+            dmm_obj.add_tp(gt_list, pred_list[tp])
+            nll_reg_obj.add_tp(gt_list, pred_list[tp])
+            energy_obj.add_tp(gt_list, pred_list[tp])
 
-            # FP loop
-            for obj in pred_list[fp]:
-                nll_clf_obj.add_bg_tp(obj.data['score_all'][NUM_CLASSES])
-                binary_brier_obj.add_bg_tp(obj.data['score_all'][NUM_CLASSES])
-                brier_obj.add_fp(NUM_CLASSES, obj.data['score_all'])
-                energy_obj.add_fp(obj.data['boxes_lidar'], obj.data['pred_vars'])
+            # FP 
+            nll_clf_obj.add_bg_tp(pred_list[fp])
+            binary_brier_obj.add_bg_tp(pred_list[fp])
+            brier_obj.add_fp(pred_list[fp])
+            energy_obj.add_fp(pred_list[fp])
+                
 
         print('NLL Classification mean', nll_clf_obj.mean().round(4))
         print('NLL Classification mean TP', nll_clf_obj.mean_tp().round(4))
