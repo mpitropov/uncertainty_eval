@@ -5,7 +5,7 @@ from torch.distributions.von_mises import VonMises
 from scoring.scoring_rule import ScoringRule
 
 class ENERGYSCORE(ScoringRule):
-    def calc_energy_score(self, distr, gt_box_means=None):
+    def calc_energy_score(self, distr, gt_box_means=None, periodic_distr=False):
         # Energy Score.
         sample_set = distr.sample((1000,)) # github code is 1001, paper mentions 1000
         sample_set_1 = sample_set[:-1]
@@ -14,10 +14,23 @@ class ENERGYSCORE(ScoringRule):
         # Following is how it's described in paper
         # Github implementation first norm term: (sample_set_1 - gt_box_means) 
         # https://github.com/asharakeh/probdet/blob/master/src/core/evaluation_tools/scoring_rules.py#L156-L161
-        energy_score = torch.norm((sample_set_1 - sample_set_2), dim=2).mean(0)
+        sample1_minus_sample2 = sample_set_1 - sample_set_2
+        if periodic_distr:
+            bool_mask = sample1_minus_sample2 > np.pi
+            sample1_minus_sample2[bool_mask] -= np.pi*2
+            bool_mask = sample1_minus_sample2 < -np.pi
+            sample1_minus_sample2[bool_mask] += np.pi*2
+
+        energy_score = torch.norm(sample1_minus_sample2, dim=2).mean(0)
 
         if gt_box_means is not None:
-            energy_score = torch.norm((sample_set - gt_box_means), dim=2).mean(0) - \
+            sample_minus_gt = sample_set - gt_box_means
+            if periodic_distr:
+                bool_mask = sample_minus_gt > np.pi
+                sample_minus_gt[bool_mask] -= np.pi*2
+                bool_mask = sample_minus_gt < -np.pi
+                sample_minus_gt[bool_mask] += np.pi*2
+            energy_score = torch.norm(sample_minus_gt, dim=2).mean(0) - \
                         0.5 * \
                         energy_score
         
@@ -38,7 +51,7 @@ class ENERGYSCORE(ScoringRule):
                 torch.tensor(1/pred_box_vars[:,-1:]))
 
         energy_score = self.calc_energy_score(pred_multivariate_normal_dists, gt_box_means[:,:-1])
-        energy_score += self.calc_energy_score(pred_von_mises_dists, gt_box_means[:,-1:])
+        energy_score += self.calc_energy_score(pred_von_mises_dists, gt_box_means[:,-1:], periodic_distr=True)
         self.tp_value_list = energy_score
 
     def add_fp(self, pred_list):
@@ -55,5 +68,5 @@ class ENERGYSCORE(ScoringRule):
                 torch.tensor(1/pred_box_vars[:,-1:]))
 
         fp_energy_score = self.calc_energy_score(pred_multivariate_normal_dists)
-        fp_energy_score += self.calc_energy_score(pred_von_mises_dists)
+        fp_energy_score += self.calc_energy_score(pred_von_mises_dists, periodic_distr=True)
         self.fp_value_list = fp_energy_score
