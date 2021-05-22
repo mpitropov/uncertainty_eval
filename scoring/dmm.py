@@ -8,6 +8,10 @@ class DMM(ScoringRule):
         gt_box_means = np.array([gt_list[int(obj.matched_idx)].data['gt_boxes'] for obj in pred_list]).reshape(-1,7,1)
         
         target_minus_pred = gt_box_means - pred_box_means
+        bool_mask = target_minus_pred[:,-1] > np.pi
+        target_minus_pred[:,-1][bool_mask] -= np.pi*2
+        bool_mask = target_minus_pred[:,-1] < -np.pi
+        target_minus_pred[:,-1][bool_mask] += np.pi*2
         
         pred_vars_minus_actual = pred_box_vars - \
             np.matmul(target_minus_pred,target_minus_pred.transpose(0,2,1))
