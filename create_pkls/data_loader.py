@@ -69,7 +69,10 @@ class DataSource():
         train_split = self.train_split if train_indices is None else [self.train_split[i] for i in train_indices]
         val_split = self.val_split if val_indices is None else [self.val_split[i] for i in val_indices]
         test_split = self.test_split if test_indices is None else [self.test_split[i] for i in test_indices]
-        splits = train_split + val_split + test_split
+        if len(train_split) == 0 and len(val_split) == 0: # CADC
+            splits = test_split
+        else:
+            splits = train_split + val_split + test_split
         return Data( splits, partial(self.prepare_data, split=mode) )
 
     def train_data(self, indices=None):

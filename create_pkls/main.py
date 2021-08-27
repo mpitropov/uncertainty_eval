@@ -9,7 +9,7 @@ import torch
 
 # import wise_alf as alf
 # from wise_alf.data import PyTorchDataLoader
-from data_loader import PyTorchDataLoader
+from data_loader import PyTorchDataLoader, DataPool
 from logger import FileLogger, CustomLogger
 from initial_sampling.random_initialization import RandomInitializer
 import model
@@ -134,15 +134,22 @@ if __name__ == '__main__':
     #         'thresholds': [2.0, 2.0, 2.0],
     #         'class_names': dataset_cfg.CLASS_NAMES
     #     }
-    # elif 'cadc' in dataset_name:
-    #     from datasets.cadc import CADC
-    #     data_source = CADC(dataset_cfg)
-    #     data_pool = alf.data.DataPool(len(data_source.train_split))
-    #     eval_config = {
-    #         'criterion': 'iou',
-    #         'thresholds': [0.7, 0.5, 0.5],
-    #         'class_names': dataset_cfg.CLASS_NAMES
-    #     }
+    elif 'cadc' in dataset_name:
+        from datasets.cadc import CADCPool, CADC
+        dbinfos_stem = f'cadc_dbinfos_train.pkl'
+        data_source = CADC(dataset_cfg)
+        data_pool = CADCPool(
+            len(data_source.train_split),
+            data_source=data_source, 
+            dbinfos_stem=dbinfos_stem,
+            dbinfos_logger=dbinfos_logger
+        )
+        # data_pool = DataPool(len(data_source.test_split))
+        eval_config = {
+            'criterion': 'iou',
+            'thresholds': [0.7, 0.5, 0.7],
+            'class_names': dataset_cfg.CLASS_NAMES
+        }
     else:
         raise NotImplementedError(f'Unknown dataset {dataset_cfg.DATASET}')
 

@@ -5,7 +5,7 @@ class BRIERSCORE(ScoringRule):
     def add_tp(self, pred_list):
         softmax_scores = np.array([obj.data['score_all'] for obj in pred_list])
 
-        gt_index = np.array([obj.pred_label - 1 for obj in pred_list])
+        gt_index = np.array([obj.pred_label - 1 for obj in pred_list], dtype=int)
         gt_labels = np.zeros(softmax_scores.shape)
         # Add 1 to every row of gt_labels at the gt_index
         np.add.at(gt_labels, (range(len(gt_labels)), gt_index), 1)

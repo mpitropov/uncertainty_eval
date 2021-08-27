@@ -96,6 +96,37 @@ class KITTI(DataSource):
         lidar_file = self.root_split_path / 'velodyne' / ('%s.bin' % idx)
         assert lidar_file.exists()
         return np.fromfile(str(lidar_file), dtype=np.float32).reshape(-1, 4)
+        kitti_pc = np.fromfile(str(lidar_file), dtype=np.float32).reshape(-1, 4)
+        from numpy.random import default_rng
+        rng = default_rng(int(idx))
+        num_points = 10000
+        x_mu = 0
+        x_sigma = 8.0
+        y_mu = 0
+        y_sigma = 8.0
+        z_mu = 0.1
+        z_sigma = 0.3
+        intensity_mu = 0.5
+        intensity_sigma = 0.11
+        intensity_mu = 0.0002
+        intensity_sigma = 0.00004
+        # Creating dataset
+        x_vals = rng.normal(x_mu, x_sigma, num_points)
+        y_vals = rng.normal(y_mu, y_sigma, num_points)
+        z_vals = rng.normal(z_mu, z_sigma, num_points)
+        i_vals = rng.normal(intensity_mu, intensity_sigma, num_points)
+
+        corrupt_pc = np.stack([x_vals, y_vals, z_vals, i_vals], axis=1)
+        # Replace points in kitti
+        mask = np.zeros(len(kitti_pc))
+        mask[0:len(corrupt_pc)] = 1
+        rng.shuffle(mask)
+        corrupt_pc_index = 0
+        for i in range(len(kitti_pc)):
+            if mask[i] == 1:
+                kitti_pc[i] = corrupt_pc[corrupt_pc_index]
+                corrupt_pc_index += 1
+        return kitti_pc
 
     # Directly (no change) ported from get_calib
     def get_calib(self, idx):
