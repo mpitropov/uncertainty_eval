@@ -7,24 +7,39 @@ from torch.distributions.von_mises import VonMises
 from scoring.scoring_rule import ScoringRule
 
 class NLLREG(ScoringRule):        
-    def add_tp(self, gt_list, pred_list):
+    def get_pos_matches(self, gt_list, pred_list):
         pred_box_means = np.array([obj.data['boxes_lidar'] for obj in pred_list])
         pred_box_vars = np.array([obj.data['pred_vars'] for obj in pred_list])
         gt_box_means = np.array([gt_list[int(obj.matched_idx)].data['gt_boxes'] for obj in pred_list])
 
         pred_var_mat = [np.diag(i[:-1]) for i in pred_box_vars]
         pred_multivariate_normal_dists = MultivariateNormal(
-                torch.tensor(pred_box_means[:,:-1], dtype=torch.double),
-                torch.tensor(pred_var_mat, dtype=torch.double) + 1e-2 * torch.eye(pred_box_vars.shape[1]-1, dtype=torch.double))
+            torch.tensor(pred_box_means[:,:-1], dtype=torch.double),
+            torch.tensor(pred_var_mat, dtype=torch.double) + 1e-2 * torch.eye(pred_box_vars.shape[1]-1, dtype=torch.double))
 
         pred_von_mises_dists = VonMises(
-                torch.tensor(pred_box_means[:,-1:], dtype=torch.double),
-                torch.tensor(1/pred_box_vars[:,-1:], dtype=torch.double))
+            torch.tensor(pred_box_means[:,-1:], dtype=torch.double),
+            torch.tensor(1/(pred_box_vars[:,-1:] + 1e-2), dtype=torch.double))
 
         negative_log_prob = -pred_multivariate_normal_dists.log_prob(torch.tensor(gt_box_means[:,:-1], dtype=torch.double))
         negative_log_prob += -pred_von_mises_dists.log_prob(torch.tensor(gt_box_means[:,-1:], dtype=torch.double)).squeeze()
 
-        self.tp_value_list = negative_log_prob.numpy()
+        return negative_log_prob.numpy()
+
+    def add_tp(self, gt_list, pred_list):
+        if len(pred_list) == 0:
+            return
+        self.tp_value_list = self.get_pos_matches(gt_list, pred_list)
+
+    def add_dup(self, gt_list, pred_list):
+        if len(pred_list) == 0:
+            return
+        self.dup_value_list = self.get_pos_matches(gt_list, pred_list)
+
+    def add_loc_err(self, gt_list, pred_list):
+        if len(pred_list) == 0:
+            return
+        self.loc_err_value_list = self.get_pos_matches(gt_list, pred_list)
 
 class NLLREG_Calibration():
     def __init__(self):
@@ -35,103 +50,41 @@ class NLLREG_Calibration():
         pred_box_vars = np.array([obj.data['pred_vars'] for obj in pred_list])
         gt_box_means = np.array([gt_list[int(obj.matched_idx)].data['gt_boxes'] for obj in pred_list])
 
-        pred_normal_dists = []
-        for i in range(6):
-                pred_normal_dists.append(Normal(
-                        torch.tensor(pred_box_means[:,i], dtype=torch.double),
-                        torch.tensor(np.sqrt(pred_box_vars[:,i]), dtype=torch.double) + 1e-2
+        # normalize predicted mean angle to [gt angle - pi, gt angle + pi]
+        for i in range(len(pred_box_means)):
+            if pred_box_means[i][6] > gt_box_means[i][6] + np.pi:
+                pred_box_means[i][6] -= 2*np.pi
+            if pred_box_means[i][6] < gt_box_means[i][6] - np.pi:
+                pred_box_means[i][6] += 2*np.pi
 
-                ))
+        reg_var_names = ['x', 'y', 'z', 'l', 'w', 'h', 'rz']
+        np_eps = np.finfo(float).eps
 
+        best_T_list = []
+
+        print('Finding best T for regression calibration')
         for i in range(7):
-                print('NLL index', i)
-                T_bot = 0.001
-                T_top = 5.0
-                nll_bot = None
-                nll_top = None
-                chosen_T = None
-                increment = T_top / 2
-                for j in range(30):
-                        if nll_bot == None:
-                                if i < 6:
-                                        dists = Normal(
-                                                torch.tensor(pred_box_means[:,i], dtype=torch.double),
-                                                torch.tensor(np.sqrt(pred_box_vars[:,i] / T_bot), dtype=torch.double)
+            lowest_nll = np.Inf
+            best_T = None
+            for curr_T in np.arange(start = 0.05, stop = 2.0, step = 0.05):
+                if i != 6:
+                    dists = Normal(
+                        torch.tensor(pred_box_means[:,i], dtype=torch.double),
+                        torch.tensor(np.sqrt(pred_box_vars[:,i] / curr_T), dtype=torch.double)
+                    )
+                    var = -dists.log_prob(torch.tensor(gt_box_means[:,i], dtype=torch.double))
+                else:
+                    dists = VonMises(
+                            torch.tensor(pred_box_means[:,-1:], dtype=torch.double),
+                            torch.tensor(1/(pred_box_vars[:,-1:] / curr_T), dtype=torch.double))
+                    var = -dists.log_prob(torch.tensor(gt_box_means[:,-1:], dtype=torch.double)).squeeze()
+                nll_mean = var.mean()
+                if nll_mean < lowest_nll:
+                    lowest_nll = nll_mean
+                    best_T = curr_T
+                    print('    Found new low NLL: lowest_nll, best_T', lowest_nll, best_T)
 
-                                        )
-                                        var = -dists.log_prob(torch.tensor(gt_box_means[:,i], dtype=torch.double))
-                                else:
-                                        # dists = VonMises(
-                                        #         torch.tensor(pred_box_means[:,-1:], dtype=torch.double),
-                                        #         torch.tensor(1/(pred_box_vars[:,-1:] / T_bot), dtype=torch.double))
-                                        # var = -dists.log_prob(torch.tensor(gt_box_means[:,-1:], dtype=torch.double)).squeeze()
-                                        dists = VonMises(
-                                                torch.tensor(gt_box_means[:,-1:], dtype=torch.double),
-                                                torch.tensor(1/(pred_box_vars[:,-1:] / T_bot), dtype=torch.double))
-                                        var = -dists.log_prob(torch.tensor(pred_box_means[:,-1:], dtype=torch.double)).squeeze()
-                                        print('nll bot sum', var.numpy().sum())
-                                        print('nll bot mean', var.numpy().mean())
-                                nll_bot = var.numpy().sum()
-                                # print('nll bot', nll_bot, T_bot)
-                        if nll_top == None:
-                                if i < 6:
-                                        dists = Normal(
-                                                torch.tensor(pred_box_means[:,i], dtype=torch.double),
-                                                torch.tensor(np.sqrt(pred_box_vars[:,i] / T_top), dtype=torch.double)
+            print('NLL REG Calibration', reg_var_names[i], 'best_T:', best_T)
+            best_T_list.append(float(best_T.round(2)))
 
-                                        )
-                                        var = -dists.log_prob(torch.tensor(gt_box_means[:,i], dtype=torch.double))
-                                else:
-                                        # dists = VonMises(
-                                        #         torch.tensor(pred_box_means[:,-1:], dtype=torch.double),
-                                        #         torch.tensor(1/(pred_box_vars[:,-1:] / T_top), dtype=torch.double))
-                                        # var = -dists.log_prob(torch.tensor(gt_box_means[:,-1:], dtype=torch.double)).squeeze()
-                                        dists = VonMises(
-                                                torch.tensor(gt_box_means[:,-1:], dtype=torch.double),
-                                                torch.tensor(1/(pred_box_vars[:,-1:] / T_top), dtype=torch.double))
-                                        var = -dists.log_prob(torch.tensor(pred_box_means[:,-1:], dtype=torch.double)).squeeze()
-                                        print('nll top sum', var.numpy().sum())
-                                        print('nll top mean', var.numpy().mean())
-                                nll_top = var.numpy().sum()
-                                # print('nll top', nll_top, T_top)
-                        
-                        chosen_T = T_bot + increment
-                        # print('chosen_T', chosen_T)
-                        if i < 6:
-                                dists = Normal(
-                                        torch.tensor(pred_box_means[:,i], dtype=torch.double),
-                                        torch.tensor(np.sqrt(pred_box_vars[:,i] / chosen_T), dtype=torch.double)
-
-                                )
-                                var = -dists.log_prob(torch.tensor(gt_box_means[:,i], dtype=torch.double))
-                        else:
-                                # dists = VonMises(
-                                #         torch.tensor(pred_box_means[:,-1:], dtype=torch.double),
-                                #         torch.tensor(1/(pred_box_vars[:,-1:] / chosen_T), dtype=torch.double))
-                                # var = -dists.log_prob(torch.tensor(gt_box_means[:,-1:], dtype=torch.double)).squeeze()
-                                dists = VonMises(
-                                        torch.tensor(gt_box_means[:,-1:], dtype=torch.double),
-                                        torch.tensor(1/(pred_box_vars[:,-1:] / chosen_T), dtype=torch.double))
-                                var = -dists.log_prob(torch.tensor(pred_box_means[:,-1:], dtype=torch.double)).squeeze()
-                                print('nll mid sum', var.numpy().sum())
-                                print('nll mid mean', var.numpy().mean())
-                        nll_mid = var.numpy().sum()
-                        # print('nll mid', nll_mid, chosen_T)
-                        if nll_bot < nll_mid:
-                                T_top = chosen_T
-                                # print('T_top set to', T_top)
-                        elif nll_top < nll_mid:
-                                T_bot = chosen_T
-                                # print('T_bot set to', T_bot)
-                        # Unclear: bring in the bounds
-                        else:
-                                nll_bot = None # reset these
-                                nll_top = None
-                                T_diff = increment / 2
-                                T_top -= T_diff
-                                T_bot += T_diff
-                                # print('T_top set to', T_top)
-                                # print('T_bot set to', T_bot)
-                        # update increment
-                        increment /= 2
-                print('chosen T', chosen_T)
+        return best_T_list

@@ -1,18 +1,25 @@
+from os import XATTR_REPLACE
 import pickle
 import numpy as np
 from sklearn.cluster import DBSCAN
 from scipy.special import softmax
+from tqdm import tqdm
 
 from detection_eval import DetectionEval
 
-def get_labels(data_dict):
+def get_labels(data_dict, DATASET_NAME):
     if 'gt_labels' in data_dict:
         return data_dict['gt_labels']
     if 'name' in data_dict:
-        # classes = ['Car', 'Pedestrian', 'Cyclist']
-        classes = ['Car', 'Pedestrian', 'Pickup_Truck']
-        # classes = ['car','truck', 'construction_vehicle', 'bus', 'trailer', \
-                    # 'barrier', 'motorcycle', 'bicycle', 'pedestrian', 'traffic_cone']
+        if DATASET_NAME == 'KITTI':
+            classes = ['Car', 'Pedestrian', 'Cyclist']
+        elif DATASET_NAME == 'CADC':
+            classes = ['Car', 'Pedestrian', 'Pickup_Truck']
+        elif DATASET_NAME == 'NuScenes':
+            classes = ['car','truck', 'construction_vehicle', 'bus', 'trailer', 'barrier', \
+                'motorcycle', 'bicycle', 'pedestrian', 'traffic_cone']
+        else:
+            raise NotImplementedError
         return np.array([classes.index(name)+1 for name in data_dict['name']])
     raise ValueError()
 
@@ -24,9 +31,15 @@ def get_labels(data_dict):
 # First list is number of frames in the dataset
 # Each dict is in the form of a frame output from OpenPCDet
 # but the values inside are from the mean of each cluster
-def cluster_preds(pred_dicts, MIN_CLUSTER_SIZE, tracking_mode=False):
-    num_frames = len(pred_dicts)
-    num_outputs_per_frame = len(pred_dicts[0])
+def cluster_preds(pred_dicts, DATASET_NAME, MODE, MIN_CLUSTER_SIZE, t_vals=None, tracking_mode=False):
+    from scipy import stats
+    #                 0: No Softmax      1: Softmax       2: Softmax with temp scaling
+    SOFTMAX_MODES = ['calibration', 'softmax', 'temp_scaled']
+    SELECTED_SOFTMAX_MODE = MODE
+
+    # Get Temp scaling values if in temp_scaled mode
+    if SELECTED_SOFTMAX_MODE == SOFTMAX_MODES[2]:
+        T_CLF_VAL, T_REG_VALS = t_vals
 
     # If output is already one dict per frame
     # Only should apply softmax
@@ -41,7 +54,7 @@ def cluster_preds(pred_dicts, MIN_CLUSTER_SIZE, tracking_mode=False):
         return pred_dicts
 
     new_pred_dicts = []
-    for frame_dict_list in pred_dicts:
+    for frame_dict_list in tqdm(pred_dicts):
         name_list = []
         label_list = []
         score_list = []
@@ -58,7 +71,7 @@ def cluster_preds(pred_dicts, MIN_CLUSTER_SIZE, tracking_mode=False):
 
         for single_data_dict in frame_dict_list:
             names_one_frame = single_data_dict['name']
-            labels_one_frame = get_labels(single_data_dict)
+            labels_one_frame = get_labels(single_data_dict, DATASET_NAME)
             score_one_frame = single_data_dict['score']
             score_all_one_frame = single_data_dict['score_all']
             boxes_one_frame = single_data_dict['boxes_lidar']
@@ -73,22 +86,19 @@ def cluster_preds(pred_dicts, MIN_CLUSTER_SIZE, tracking_mode=False):
             for i in range(len(labels_one_frame)):
                 name_list.append(names_one_frame[i])
                 label_list.append(labels_one_frame[i])
-                CALIBRATION_MODE = False
-                NO_TEMP_SCALE = True
-                if CALIBRATION_MODE:
-                    score_list.append(score_one_frame[i])
-                    score_all_list.append(score_all_one_frame[i]) # Don't apply softmax
-                elif NO_TEMP_SCALE:
-                    score_list.append(score_one_frame[i])
-                    score_all_list.append(softmax(score_all_one_frame[i])) # Apply softmax
-                else:
-                    # T_clf = [None, 0.7, 0.3, 0.3]
-                    T_clf = [None, 0.7, 0.3, 0.3]
-                    T = T_clf[labels_one_frame[i]]
-                    score_list.append(max(softmax(score_all_one_frame[i] / T)[:3]))
-                    score_all_list.append(softmax(score_all_one_frame[i] / T)) # Apply softmax
                 box_list.append(boxes_one_frame[i])
                 box_var_list.append(box_vars_one_frame[i])
+
+                if SELECTED_SOFTMAX_MODE == SOFTMAX_MODES[0]:
+                    score_list.append(score_one_frame[i])
+                    score_all_list.append(score_all_one_frame[i]) # Don't apply softmax
+                elif SELECTED_SOFTMAX_MODE == SOFTMAX_MODES[1]:
+                    score_list.append(score_one_frame[i])
+                    score_all_list.append(softmax(score_all_one_frame[i])) # Apply softmax
+                elif SELECTED_SOFTMAX_MODE == SOFTMAX_MODES[2]:
+                    score_list.append(score_one_frame[i])
+                    score_all_list.append(score_all_one_frame[i]) # Don't apply softmax, apply to the cluster mean
+
                 if tracking_mode:
                     bbox_list.append(bbox_one_frame[i])
                     location_list.append(location_one_frame[i])
@@ -109,51 +119,52 @@ def cluster_preds(pred_dicts, MIN_CLUSTER_SIZE, tracking_mode=False):
             rotation_y_list = np.array(rotation_y_list)
             alpha_list = np.array(alpha_list)
 
-        if len(box_list[0]) !=7:
-            print('wrong box len')
-            print(len(box_list))
-            print(len(box_list[0]))
-            exit()
-
-        ctable = DetectionEval.compute_ctable(box_list, box_list, criterion='iou')
-        # IDs >= 0 are valid clusters while -1 means the cluster did not reach min samples
-        cluster_ids = DBSCAN(eps=0.7, min_samples=MIN_CLUSTER_SIZE).fit_predict(ctable)
-
+        # This will contain all clusters for a frame
         cluster_dict = {}
-        for obj_index in range(len(cluster_ids)):
-            cluster_id = cluster_ids[obj_index]
-            if cluster_id  == -1:
-                continue
 
-            if cluster_id not in cluster_dict: # New cluster found
-                cluster_dict[cluster_id] = {
-                    'name': [name_list[obj_index]],
-                    'pred_labels': [label_list[obj_index]],
-                    'score': [score_list[obj_index]],
-                    'score_all': [score_all_list[obj_index]],
-                    'boxes_lidar': [box_list[obj_index]],
-                    'pred_vars': [box_var_list[obj_index]]
-                }
-                if tracking_mode:
-                    cluster_dict[cluster_id]['bbox'] = [bbox_list[obj_index]]
-                    cluster_dict[cluster_id]['location'] = [location_list[obj_index]]
-                    cluster_dict[cluster_id]['dimensions'] = [dimensions_list[obj_index]]
-                    cluster_dict[cluster_id]['rotation_y'] = [rotation_y_list[obj_index]]
-                    cluster_dict[cluster_id]['alpha'] = [alpha_list[obj_index]]
-            else: # Append to existing cluster
-                cluster_dict[cluster_id]['name'].append(name_list[obj_index])
-                cluster_dict[cluster_id]['pred_labels'].append(label_list[obj_index])
-                cluster_dict[cluster_id]['score'].append(score_list[obj_index])
-                cluster_dict[cluster_id]['score_all'].append(score_all_list[obj_index])
-                cluster_dict[cluster_id]['boxes_lidar'].append(box_list[obj_index])
-                cluster_dict[cluster_id]['pred_vars'].append(box_var_list[obj_index])
-                if tracking_mode:
-                    cluster_dict[cluster_id]['bbox'].append(bbox_list[obj_index])
-                    cluster_dict[cluster_id]['location'].append(location_list[obj_index])
-                    cluster_dict[cluster_id]['dimensions'].append(dimensions_list[obj_index])
-                    cluster_dict[cluster_id]['rotation_y'].append(rotation_y_list[obj_index])
-                    cluster_dict[cluster_id]['alpha'].append(alpha_list[obj_index])
-        #     print(cluster_dict)
+        # We can only use ctable if the box_list contains at least one box
+        if len(box_list) > 0:
+            ctable = DetectionEval.compute_ctable(box_list, box_list, criterion='iou')
+            ctable[ctable > 1.0] = 1.0
+            ctable = 1.0 - ctable
+            minIoU = 0.5
+            minDist = 1.0 - minIoU
+            # IDs >= 0 are valid clusters while -1 means the cluster did not reach min samples
+            cluster_ids = DBSCAN(eps=minDist, min_samples=MIN_CLUSTER_SIZE, metric='precomputed').fit_predict(ctable)
+
+            for obj_index in range(len(cluster_ids)):
+                cluster_id = cluster_ids[obj_index]
+                if cluster_id  == -1:
+                    continue
+
+                if cluster_id not in cluster_dict: # New cluster found
+                    cluster_dict[cluster_id] = {
+                        'name': [name_list[obj_index]],
+                        'pred_labels': [label_list[obj_index]],
+                        'score': [score_list[obj_index]],
+                        'score_all': [score_all_list[obj_index]],
+                        'boxes_lidar': [box_list[obj_index]],
+                        'pred_vars': [box_var_list[obj_index]]
+                    }
+                    if tracking_mode:
+                        cluster_dict[cluster_id]['bbox'] = [bbox_list[obj_index]]
+                        cluster_dict[cluster_id]['location'] = [location_list[obj_index]]
+                        cluster_dict[cluster_id]['dimensions'] = [dimensions_list[obj_index]]
+                        cluster_dict[cluster_id]['rotation_y'] = [rotation_y_list[obj_index]]
+                        cluster_dict[cluster_id]['alpha'] = [alpha_list[obj_index]]
+                else: # Append to existing cluster
+                    cluster_dict[cluster_id]['name'].append(name_list[obj_index])
+                    cluster_dict[cluster_id]['pred_labels'].append(label_list[obj_index])
+                    cluster_dict[cluster_id]['score'].append(score_list[obj_index])
+                    cluster_dict[cluster_id]['score_all'].append(score_all_list[obj_index])
+                    cluster_dict[cluster_id]['boxes_lidar'].append(box_list[obj_index])
+                    cluster_dict[cluster_id]['pred_vars'].append(box_var_list[obj_index])
+                    if tracking_mode:
+                        cluster_dict[cluster_id]['bbox'].append(bbox_list[obj_index])
+                        cluster_dict[cluster_id]['location'].append(location_list[obj_index])
+                        cluster_dict[cluster_id]['dimensions'].append(dimensions_list[obj_index])
+                        cluster_dict[cluster_id]['rotation_y'].append(rotation_y_list[obj_index])
+                        cluster_dict[cluster_id]['alpha'].append(alpha_list[obj_index])
 
         # Calculate means of each cluster
         final_name_list = []
@@ -162,6 +173,9 @@ def cluster_preds(pred_dicts, MIN_CLUSTER_SIZE, tracking_mode=False):
         final_score_all_list = []
         final_shannon_entropy_list = []
         final_aleatoric_entropy_list = []
+        final_mutual_info_list = []
+        final_epistemic_total_var_list = []
+        final_aleatoric_total_var_list = []
         final_box_list = []
         final_var_list = []
         final_cluster_size_list = []
@@ -175,7 +189,9 @@ def cluster_preds(pred_dicts, MIN_CLUSTER_SIZE, tracking_mode=False):
         # load the model from disk
         USE_ISO_REG = False
         if USE_ISO_REG:
-            filename = 'mimo_a_multiclass_isotonic_reg.sav'
+            filename = 'mcdropout_multiclass_isotonic_reg.sav'
+            # filename = 'ensemble_multiclass_isotonic_reg.sav'
+            # filename = 'mimo_a_multiclass_isotonic_reg.sav'
             iso_reg_model = pickle.load(open(filename, 'rb'))
 
         for cluster_id in cluster_dict:
@@ -277,81 +293,16 @@ def cluster_preds(pred_dicts, MIN_CLUSTER_SIZE, tracking_mode=False):
                 final_cluster_size_list.append(len(cluster['pred_vars']))
                 continue
             elif merge_mode == 'mean':
-                # # Temp scaling
-                # T_vals = [
-                #     [0.606, 0.803, 0.003, 0.618, 0.596, 0.913, 3.0], # Car
-                #     [0.715, 0.920, 0.016, 1.309, 0.500, 0.958, 0.203], # Ped
-                #     [0.500, 0.510, 0.016, 0.538, 0.500, 0.581, 0.250] # Cyc
-                # ]
-                # for i in range(len(T_vals[0])):
-                #     for obj_id in range(len(cluster['pred_vars'])):
-                #         tmp_T = T_vals[cluster['pred_labels'][obj_id] - 1] # Convert to list index
-                #         cluster['pred_vars'][obj_id][i] = cluster['pred_vars'][obj_id][i] / tmp_T[i]
 
-                from scipy.stats import circmean
-                # blah = False
-                # for i in range(len(cluster['pred_labels']) - 1):
-                #     if cluster['pred_labels'][i] != cluster['pred_labels'][i+1]:
-                #         print('mismatch label in cluster')
-                #         break
-                #     # angle_a = cluster['boxes_lidar'][i][6]
-                #     # if angle_a > np.pi:
-                #     #     angle_a -= 2*np.pi
-                #     # angle_b = cluster['boxes_lidar'][i+1][6]
-                #     # if angle_b > np.pi:
-                #     #     angle_b -= 2*np.pi
-                #     # if not np.isclose(angle_a, angle_b, atol=0.4):
-                #     #     print('yaw mismatch', angle_a, angle_b)
-                #     #     break
-                #     # We must use circmean for edge case angles
-                #     angle_a = cluster['boxes_lidar'][i][6]
-                #     angle_b = cluster['boxes_lidar'][i+1][6]
-                #     circmean_of_angles = circmean([angle_a, angle_b], high = np.pi, low = -np.pi)
-                #     testinga = circmean([angle_a], high = np.pi, low = -np.pi)
-                #     testingb = circmean([angle_b], high = np.pi, low = -np.pi)
-                #     if np.abs(testinga - circmean_of_angles) > 1.0 and np.abs(testingb - circmean_of_angles) > 1.0:
-                #         print("circ mean test")
-                #         for idx in range(len(cluster['boxes_lidar'])):
-                #             print('angle in cluster', cluster['boxes_lidar'][idx][6])
-                #         print("pred_boxes angle_a", angle_a)
-                #         print("pred_boxes angle_b", angle_b)
-                #         print("real mean of angles", circmean_of_angles)
-                #         print("fake mean of angles", testinga)
-                #         print("fake mean of angles", testingb)
-                #         for j in range(len(cluster['pred_labels'])):
-                #             final_score_list.append(cluster['score'][j])
-                #             final_box_list.append(cluster['boxes_lidar'][j])
-                #             final_var_list.append(cluster['pred_vars'][j])
-                #             final_name_list.append(cluster['name'][j])
-                #             final_label_list.append(cluster['pred_labels'][j])
-                #             final_score_all_list.append(cluster['score_all'][j])
-                #             final_cluster_size_list.append(1)
-                #             final_shannon_entropy_list.append(stats.entropy(cluster['score_all'][j]))
-                #             final_aleatoric_entropy_list.append(stats.entropy(cluster['score_all'][j]))
-                #             if tracking_mode:
-                #                 final_bbox_list.append(cluster['bbox'][j])
-                #                 final_location_list.append(cluster['location'][j])
-                #                 final_dimensions_list.append(cluster['dimensions'][j])
-                #                 final_rotation_y_list.append(cluster['rotation_y'][j])
-                #                 final_alpha_list.append(cluster['alpha'][j])
-                #         blah = True
-                #         continue
-                # if blah == True:
-                #     continue
-                from scipy import stats
-                # Predictive Entropy: Captures total uncertainty (H = MI + AE)
-                # Calculated as entropy of mean categorical distribution
-                pred_entropy = stats.entropy( np.mean(cluster['score_all'], axis=0), base = 2 )
-                # Aleatoric Entropy: AE
-                # Calculated by averaging the entropy of each sampled categorical distribution
-                entropy_list = []
-                for i in range(len(cluster['pred_vars'])):
-                    entropy_list.append(stats.entropy(cluster['score_all'][i], base = 2))
-                aleatoric_entropy = np.mean(entropy_list)
-                final_shannon_entropy_list.append(pred_entropy)
-                final_aleatoric_entropy_list.append(aleatoric_entropy)
 
-                highest_conf_pred_idx = np.argmax(cluster['score'])
+                if SELECTED_SOFTMAX_MODE == SOFTMAX_MODES[2]:
+                    max_score_list = []
+                    for i in range(len(cluster['score_all'])):
+                        # best_foreground_idx = np.argmax(cluster['score_all'][i][:3])
+                        max_score_list.append(max(softmax(cluster['score_all'][i] / T_CLF_VAL)[:3]))
+                    highest_conf_pred_idx = np.argmax(max_score_list)
+                else:
+                    highest_conf_pred_idx = np.argmax(cluster['score'])
 
                 pred_box_tmp = np.mean(cluster['boxes_lidar'], axis=0)
                 pred_box_tmp[6] = cluster['boxes_lidar'][highest_conf_pred_idx][6] # Replace yaw
@@ -371,21 +322,72 @@ def cluster_preds(pred_dicts, MIN_CLUSTER_SIZE, tracking_mode=False):
                     cluster['pred_vars'][box_id][4] *= np.square(pred_box_tmp[4])
                     cluster['pred_vars'][box_id][5] *= np.square(pred_box_tmp[5])
 
-                mean_cluster_var = np.mean(cluster['pred_vars'], axis=0)
+                # Regression uncertainty
+                # Calculate without temp scaling since temp scaling is applied after clustering
+                mean_box_pos = np.mean(cluster['boxes_lidar'], axis=0)
+                epistemic_var = np.mean((cluster['boxes_lidar'] - mean_box_pos)**2, axis=0)
+                aleatoric_var = np.mean(cluster['pred_vars'], axis=0)
+                final_epistemic_total_var_list.append(np.sum(epistemic_var[:7]))
+                final_aleatoric_total_var_list.append(np.sum(aleatoric_var[:7]))
+
+                # Predictive variance is mean epistemic var + mean aleatoric var
+                mean_cluster_var = epistemic_var + aleatoric_var
+                mean_cluster_var[6] = cluster['pred_vars'][highest_conf_pred_idx][6] # Replace yaw variance
+
+                mean_score = None
+                mean_score_all = None
+                mean_label = None # label from max foreground of mean_score_all
+
                 if USE_ISO_REG:
                     # final_score_list.append( iso_reg_model.predict([np.mean(cluster['score'])])[0] )
                     prob = iso_reg_model.predict_proba([np.mean(cluster['score_all'], axis=0)])[0]
-                    final_score_list.append( prob[np.argmax(prob[:3])])
-                    final_score_all_list.append(prob)
+                    mean_label = np.argmax(prob[:3])
+                    mean_score = prob[mean_label]
+                    mean_label += 1 # Add one since labels start at 1
+                    mean_score_all = prob
+                elif SELECTED_SOFTMAX_MODE == SOFTMAX_MODES[2]:
+                    mean_score_all = np.mean(cluster['score_all'], axis=0)
+                    # Temp Scaling Classification
+                    softmax_output = softmax(mean_score_all / T_CLF_VAL)
+                    mean_label = np.argmax(softmax_output[:3])
+                    mean_score = softmax_output[mean_label]
+                    mean_label += 1 # Add one since labels start at 1
+                    mean_score_all = softmax_output
+                    # Temp Scaling Regression
+                    for i in range(len(T_REG_VALS)):
+                        mean_cluster_var[i] = mean_cluster_var[i] / T_REG_VALS[i]
                 else:
-                    final_score_list.append(np.mean(cluster['score']))
-                    final_score_all_list.append(np.mean(cluster['score_all'], axis=0))
+                    mean_score = np.mean(cluster['score'])
+                    mean_score_all = np.mean(cluster['score_all'], axis=0)
+                    mean_label = np.argmax(mean_score_all[:3]) + 1 # Add one since labels start at 1
+
+                # Compute softmax per row, this should be done when in temp scale mode
+                if SELECTED_SOFTMAX_MODE == SOFTMAX_MODES[0]:
+                    softmax_dist_row = softmax(cluster['score_all'], axis=1)
+                elif SELECTED_SOFTMAX_MODE == SOFTMAX_MODES[1]:
+                    softmax_dist_row = cluster['score_all']
+                elif SELECTED_SOFTMAX_MODE == SOFTMAX_MODES[2]:
+                    softmax_dist_row = softmax(np.asarray(cluster['score_all']) / T_CLF_VAL, axis=1)
+                # Predictive Entropy: Captures total uncertainty (H = MI + AE)
+                # Calculated as entropy of mean categorical distribution
+                pred_entropy = stats.entropy( np.mean(softmax_dist_row, axis=0), base = 2 )
+                # Aleatoric Entropy: AE
+                # Calculated by averaging the entropy of each sampled categorical distribution
+                entropy_list = []
+                for i in range(len(cluster['pred_vars'])):
+                    entropy_list.append(stats.entropy(softmax_dist_row[i], base = 2))
+                aleatoric_entropy = np.mean(entropy_list)
+                final_shannon_entropy_list.append(pred_entropy)
+                final_aleatoric_entropy_list.append(aleatoric_entropy)
+                # Mutual Information: MI = H - AE
+                final_mutual_info_list.append(pred_entropy - aleatoric_entropy)
 
                 final_box_list.append(pred_box_tmp)
                 final_var_list.append(mean_cluster_var)
-
-                final_name_list.append(cluster['name'][highest_conf_pred_idx])
-                final_label_list.append(cluster['pred_labels'][highest_conf_pred_idx])
+                final_score_list.append(mean_score)
+                final_score_all_list.append(mean_score_all)
+                final_name_list.append(cluster['name'][highest_conf_pred_idx]) # This could be wrong but we don't use name
+                final_label_list.append(mean_label)
                 final_cluster_size_list.append(len(cluster['pred_vars']))
                 if tracking_mode:
                     final_bbox_list.append(np.mean(cluster['bbox'], axis=0))
@@ -653,15 +655,22 @@ def cluster_preds(pred_dicts, MIN_CLUSTER_SIZE, tracking_mode=False):
             # final_aleatoric_entropy_list.append(1.0)
             # final_cluster_size_list.append(1)
 
+        # Standard OpenPCDet output
         final_name_list = np.array(final_name_list)
         final_label_list = np.array(final_label_list)
         final_score_list = np.array(final_score_list)
-        final_score_all_list = np.array(final_score_all_list)
-        final_shannon_entropy_list = np.array(final_shannon_entropy_list)
-        final_aleatoric_entropy_list = np.array(final_aleatoric_entropy_list)
         final_box_list = np.array(final_box_list)
         final_var_list = np.array(final_var_list)
+        # Additional softmax output and cluster size information 
+        final_score_all_list = np.array(final_score_all_list)
         final_cluster_size_list = np.array(final_cluster_size_list)
+        # Uncertainty
+        final_shannon_entropy_list = np.array(final_shannon_entropy_list)
+        final_aleatoric_entropy_list = np.array(final_aleatoric_entropy_list)
+        final_mutual_info_list = np.array(final_mutual_info_list)
+        final_epistemic_total_var_list = np.array(final_epistemic_total_var_list)
+        final_aleatoric_total_var_list = np.array(final_aleatoric_total_var_list)
+        # Tracking
         if tracking_mode:
             final_bbox_list = np.array(final_bbox_list)
             final_location_list = np.array(final_location_list)
@@ -683,10 +692,14 @@ def cluster_preds(pred_dicts, MIN_CLUSTER_SIZE, tracking_mode=False):
             'score_all': final_score_all_list,
             'shannon_entropy': final_shannon_entropy_list,
             'aleatoric_entropy': final_aleatoric_entropy_list,
+            'mutual_info': final_mutual_info_list,
+            'epistemic_total_var': final_epistemic_total_var_list,
+            'aleatoric_total_var': final_aleatoric_total_var_list,
             'boxes_lidar': final_box_list,
             'pred_vars': final_var_list,
             'cluster_size': final_cluster_size_list
         }
+
         if tracking_mode:
             new_pred_dict['bbox'] = final_bbox_list
             new_pred_dict['location'] = final_location_list
