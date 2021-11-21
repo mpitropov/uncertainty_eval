@@ -4,7 +4,6 @@ import os
 import pickle
 import numpy as np
 
-# from wise_alf.data import DataSource
 from data_loader import DataSource, DataPool
 from .data_processor import DataProcessor
 from pcdet.datasets.cadc import cadc_calibration

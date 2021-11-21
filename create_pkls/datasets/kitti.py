@@ -3,7 +3,6 @@ from pathlib import Path
 import pickle
 import numpy as np
 
-# from wise_alf.data import DataSource, DataPool
 from data_loader import DataSource, DataPool
 from .data_processor import DataProcessor
 from pcdet.utils import box_utils, calibration_kitti, common_utils

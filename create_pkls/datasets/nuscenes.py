@@ -2,7 +2,9 @@ from pathlib import Path
 import pickle
 import numpy as np
 
-from wise_alf.data import DataSource
+# NuScenes has not been tested
+
+from data_loader import DataSource, DataPool
 from .data_processor import DataProcessor
 
 val_scenes = {

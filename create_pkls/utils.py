@@ -8,7 +8,6 @@ import torch
 import torch.multiprocessing as mp
 from tqdm import tqdm
 
-# import wise_alf as alf
 from pcdet.config import cfg, cfg_from_yaml_file
 
 def parse_pcdet_cfg(cfg_file):

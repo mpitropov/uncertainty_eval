@@ -17,9 +17,7 @@ import torch.multiprocessing as mp
 import torch.nn as nn
 from tensorboardX import SummaryWriter
 
-# import wise_alf as alf
 from model import Model
-# from wise_alf.utils.train_utils import EarlyStoppingController
 from utils import process_gt_batch_dict
 from pcdet.config import log_config_to_file
 from pcdet.models import build_network, model_fn_decorator, load_data_to_gpu

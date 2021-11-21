@@ -45,15 +45,15 @@ print('mean intensity corrupt_pc', np.mean(corrupt_pc[:, 3]))
 
 # Load kitti point cloud
 # kitti training 0 - 7480
-lidar_file = '/home/matthew/git/cadc_testing/WISEOpenLidarPerceptron/data/kitti/training/velodyne/00' + '0008' + '.bin'
+lidar_file = '/root/kitti/training/velodyne/00' + '0008' + '.bin'
 kitti_pc = np.fromfile(str(lidar_file), dtype=np.float32).reshape(-1, 4)
 print('min intensity kitti', np.min(kitti_pc[:, 3]))
 print('max intensity kitti', np.max(kitti_pc[:, 3]))
 print('mean intensity kitti', np.mean(kitti_pc[:, 3]))
 
-lidar_file = '/home/matthew/git/cadc_testing/WISEOpenLidarPerceptron/data/cadc/2019_02_27/0070/labeled/lidar_points/data/'
-# lidar_file = '/home/matthew/git/cadc_testing/WISEOpenLidarPerceptron/data/cadc/2019_02_27/0054/labeled/lidar_points/data/'
-# lidar_file = '/home/matthew/git/cadc_testing/WISEOpenLidarPerceptron/data/cadc/2018_03_06/0001/labeled/lidar_points/data/'
+lidar_file = '/root/cadc/2019_02_27/0070/labeled/lidar_points/data/'
+# lidar_file = '/root/cadc/2019_02_27/0054/labeled/lidar_points/data/'
+# lidar_file = '/root/cadc/2018_03_06/0001/labeled/lidar_points/data/'
 cadc_pc = np.fromfile(str(lidar_file + '0000000000.bin'), dtype=np.float32).reshape(-1, 4)
 print('min intensity cadc', np.min(cadc_pc[:, 3]))
 print('max intensity cadc', np.max(cadc_pc[:, 3]))
