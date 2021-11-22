@@ -913,32 +913,51 @@ def main():
             'CLS Brier TP', 'CLS Brier FP_ML', 'CLS Brier FP_BG', \
             'REG NLL TP', 'REG NLL FP_ML', \
             'REG Energy TP', 'REG Energy FP_ML', \
-            'MCE', 'REG ECE', \
-            'SE TP', 'SE FP_ML', 'SE FP_BG', \
-            'AE TP', 'AE FP_ML', 'AE FP_BG', \
-            'MI TP', 'MI FP_ML', 'MI FP_BG', \
-            'ETV TP', 'ETV FP_ML', 'ETV FP_BG', \
-            'ATV TP', 'ATV FP_ML', 'ATV FP_BG'
+            'MCE', 'REG ECE'
         ],
-        # Car
-        [round(nll_clf_list[0, 0], 4), round(nll_clf_list[0, 1], 4), round(nll_clf_list[0, 2], 4), \
-            round(brier_list[0, 0], 4), round(brier_list[0, 1], 4), round(brier_list[0, 2], 4), \
-            round(nll_reg_list[0, 0], 4), round(nll_reg_list[0, 1], 4), \
-            round(energy_list[0, 0], 4), round(energy_list[0, 1], 4), \
-            round(mce[0], 4), round(reg_ce[0], 4), \
-            round(se_list[0, 0], 4), round(se_list[0, 1], 4), round(se_list[0, 2], 4), \
-            round(ae_list[0, 0], 4), round(ae_list[0, 1], 4), round(ae_list[0, 2], 4), \
-            round(mi_list[0, 0], 4), round(mi_list[0, 1], 4), round(mi_list[0, 2], 4), \
-            round(etv_list[0, 0], 4), round(etv_list[0, 1], 4), round(etv_list[0, 2], 4), \
-            round(atv_list[0, 0], 4), round(atv_list[0, 1], 4), round(atv_list[0, 2], 4)
-        ],
+        # # Car
+        # [round(nll_clf_list[0, 0], 4), round(nll_clf_list[0, 1], 4), round(nll_clf_list[0, 2], 4), \
+        #     round(brier_list[0, 0], 4), round(brier_list[0, 1], 4), round(brier_list[0, 2], 4), \
+        #     round(nll_reg_list[0, 0], 4), round(nll_reg_list[0, 1], 4), \
+        #     round(energy_list[0, 0], 4), round(energy_list[0, 1], 4), \
+        #     round(mce[0], 4), round(reg_ce[0], 4)
+        # ],
         # ALL
         [np.nanmean(nll_clf_list[:, 0]).round(4), np.nanmean(nll_clf_list[:, 1]).round(4), np.nanmean(nll_clf_list[:, 2]).round(4), \
             np.nanmean(brier_list[:, 0]).round(4), np.nanmean(brier_list[:, 1]).round(4), np.nanmean(brier_list[:, 2]).round(4), \
             np.nanmean(nll_reg_list[:, 0]).round(4), np.nanmean(nll_reg_list[:, 1]).round(4), \
             np.nanmean(energy_list[:, 0]).round(4), np.nanmean(energy_list[:, 1]).round(4), \
-            np.mean(mce).round(4), np.mean(reg_ce).round(4), \
-            np.nanmean(se_list[:, 0]).round(4), np.nanmean(se_list[:, 1]).round(4), np.nanmean(se_list[:, 2]).round(4), \
+            np.mean(mce).round(4), np.mean(reg_ce).round(4)
+        ]
+    ]
+
+    # opening the csv file in 'a+' mode
+    file = open(csv_path, 'a+', newline ='')
+    
+    # writing the data into the file
+    with file:    
+        write = csv.writer(file)
+        write.writerows(data)
+
+    csv_path = os.path.join(logdir + '/final_output', PKL_FILE + '_uncertainty_sum_count.csv')
+
+    # data to be written row-wise in csv fil
+    data = [
+        ['SE TP', 'SE FP_ML', 'SE FP_BG', \
+            'AE TP', 'AE FP_ML', 'AE FP_BG', \
+            'MI TP', 'MI FP_ML', 'MI FP_BG', \
+            'ETV TP', 'ETV FP_ML', 'ETV FP_BG', \
+            'ATV TP', 'ATV FP_ML', 'ATV FP_BG'
+        ],
+        # # Car
+        # [round(se_list[0, 0], 4), round(se_list[0, 1], 4), round(se_list[0, 2], 4), \
+        #     round(ae_list[0, 0], 4), round(ae_list[0, 1], 4), round(ae_list[0, 2], 4), \
+        #     round(mi_list[0, 0], 4), round(mi_list[0, 1], 4), round(mi_list[0, 2], 4), \
+        #     round(etv_list[0, 0], 4), round(etv_list[0, 1], 4), round(etv_list[0, 2], 4), \
+        #     round(atv_list[0, 0], 4), round(atv_list[0, 1], 4), round(atv_list[0, 2], 4)
+        # ],
+        # ALL
+        [np.nanmean(se_list[:, 0]).round(4), np.nanmean(se_list[:, 1]).round(4), np.nanmean(se_list[:, 2]).round(4), \
             np.nanmean(ae_list[:, 0]).round(4), np.nanmean(ae_list[:, 1]).round(4), np.nanmean(ae_list[:, 2]).round(4), \
             np.nanmean(mi_list[:, 0]).round(4), np.nanmean(mi_list[:, 1]).round(4), np.nanmean(mi_list[:, 2]).round(4), \
             np.nanmean(etv_list[:, 0]).round(4), np.nanmean(etv_list[:, 1]).round(4), np.nanmean(etv_list[:, 2]).round(4), \
@@ -953,7 +972,6 @@ def main():
     with file:    
         write = csv.writer(file)
         write.writerows(data)
-
 
     temp = ['tp_car', 'tp_ped_cyc'] # , 'fp_ignore_minus_van'
     output_um_row = []
