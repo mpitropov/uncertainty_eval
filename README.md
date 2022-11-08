@@ -2,10 +2,6 @@
 
 Uncertainty evaluation for 3D object detection.
 
-Our guide to this respository as well as recreating the results in LiDAR-MIMO:
-[Guide](guide/README.md)
-
-
 ## References
 We use the scoring rule calculations from:
 ```
@@ -29,10 +25,4 @@ We use the frame selection code from:
   year={2021},
   url={https://openreview.net/forum?id=OGg9XnKxFAH}
 }
-```
-
-## Citation
-
-```
-To be added
 ```
